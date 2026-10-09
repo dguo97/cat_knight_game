@@ -128,14 +128,19 @@ def script_42_2(self):
         self.goto_sprite(S['角色1'])
         self.show()
         self.set_heading(S['角色1'].attr('direction'))
-        while not (((gt(S['角色3'].attr('x position'), 239) or lt(S['角色3'].attr('y position'), -179)) or (gt(S['角色3'].attr('y position'), 179) or lt(S['角色3'].attr('x position'), -239))) or self.touching(S['角色2'])):
+        # FIX: hard step cap + "pinned by the edge fence" check, so this script can
+        # never get stuck running (a running key script can't be restarted by pressing Z).
+        for _ in range(80):
+            px, py = self.x, self.y
             self.move(10)
             if self.touching(S['角色2']):
                 V['2 BLOOD'] = add(V.get('2 BLOOD', 0), -200)
-                self.hide()
+                break
+            if abs(self.x) > 239 or abs(self.y) > 179 or abs(self.x - px) + abs(self.y - py) < 1:
+                break
             yield
         self.hide()
-        return
+
 
 # ---------------------------------------------------------------- 角色
 sp41 = stage.add_sprite('角色', [

@@ -14,7 +14,10 @@ Concepts
 * Sprites are drawn back-to-front from `Stage.layers` (last item is on top).
 """
 import math
+import os
 import random
+import subprocess
+import sys
 import time
 
 import numpy as np
@@ -23,6 +26,10 @@ import pygame
 STAGE_W, STAGE_H = 480, 360
 FPS = 60                      # Scratch 1.4 redraws roughly this often
 FENCE = True                  # keep sprites from leaving the stage completely
+
+# how to start this program again (used by the restart key); captured before the game changes directory
+_LAUNCH_CMD = [sys.executable, os.path.abspath(sys.argv[0])] + sys.argv[1:]
+_LAUNCH_CWD = os.getcwd()
 
 
 # --------------------------------------------------------------------------
@@ -515,7 +522,12 @@ class Stage:
         pygame.display.init()      # (no audio: this project never plays a sound)
         pygame.font.init()
         self.title = title
-        self.screen = pygame.display.set_mode((STAGE_W, STAGE_H))
+        # SCALED: the game is still drawn at 480x360, but the window is enlarged to the biggest whole
+        # multiple that fits the desktop, can be resized by dragging, and F11 toggles fullscreen.
+        try:
+            self.screen = pygame.display.set_mode((STAGE_W, STAGE_H), pygame.SCALED | pygame.RESIZABLE)
+        except pygame.error:                      # very old pygame / unusual driver: plain small window
+            self.screen = pygame.display.set_mode((STAGE_W, STAGE_H))
         pygame.display.set_caption(title)
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("arial", 14, bold=True)
@@ -535,6 +547,8 @@ class Stage:
         self.keys_down = set()
         self.running = True
         self.stopped = False
+        self.stop_frame = 0       # frame on which the game ended (win/lose)
+        self.pending_setup = None # variable overrides applied right after the game's own set-up runs
         self.banner = None        # optional function -> text shown big in the centre
         # help / title screen (paged overlay; the game is paused while it is open)
         self.help_pages = []      # [(title, [lines])]; a line starting with '#' is a sub-heading
@@ -592,6 +606,15 @@ class Stage:
     def stop_all(self):
         self.threads.clear()
         self.stopped = True
+        self.stop_frame = self.frame
+
+    def restart(self):
+        """start a fresh copy of the game (back to the title screen) and close this one"""
+        try:
+            subprocess.Popen(_LAUNCH_CMD, cwd=_LAUNCH_CWD)
+        except OSError:
+            return                      # could not relaunch: stay on the end screen
+        self.running = False
 
     def clear_pen(self):
         self.pen_layer.fill((0, 0, 0, 0))
@@ -641,6 +664,11 @@ class Stage:
                 w.draw(self.screen, self.font)
         if self.banner:
             text = self.banner()
+            if text and self.stopped and self.frame - self.stop_frame > FPS:
+                msg = "Press R or ENTER to play again   (Esc quits)"
+                for dx, dy, col in ((1, 1, (0, 0, 0)), (0, 0, (255, 255, 255))):
+                    img = self.help_font.render(msg, True, col)
+                    self.screen.blit(img, ((STAGE_W - img.get_width()) // 2 + dx, STAGE_H // 2 + 44 + dy))
             if text:
                 for dx, dy, col in ((3, 3, (0, 0, 0)), (0, 0, (220, 30, 30))):
                     img = self.big_font.render(text, True, col)
@@ -677,8 +705,10 @@ class Stage:
             self.running = False
         else:
             if not self.started:                    # title screen: pick how to start
-                for letter, _label, keys in self.start_options:
+                for opt in self.start_options:
+                    letter, _label, keys = opt[:3]
                     if key == getattr(pygame, "K_" + letter.lower()):
+                        self.pending_setup = opt[3] if len(opt) > 3 else None
                         for kk in keys:
                             code = self.keymap[kk]
                             self.keys_down.add(code)
@@ -732,12 +762,21 @@ class Stage:
                     self.running = False
                 elif ev.type == pygame.KEYDOWN:
                     ev.key = _KP_ALIAS.get(ev.key, ev.key)
+                    if ev.key == pygame.K_F11:
+                        try:
+                            pygame.display.toggle_fullscreen()
+                        except pygame.error:
+                            pass                          # driver can't do fullscreen: ignore
+                        continue
                     if self.help_visible:
                         self._help_key(ev.key)
                     elif ev.key == pygame.K_F1 and self.help_pages:
                         self.open_help()
                     elif ev.key == pygame.K_ESCAPE:
                         self.running = False
+                    elif (self.stopped and ev.key in (pygame.K_RETURN, pygame.K_r)
+                          and self.frame - self.stop_frame > FPS):      # (1 s grace so a mashed key can't skip the result)
+                        self.restart()
                     else:
                         self.keys_down.add(ev.key)
                 elif ev.type == pygame.KEYUP:
@@ -748,6 +787,9 @@ class Stage:
                 self._draw()
             else:
                 self._step()
+                if self.pending_setup:                 # e.g. easier difficulty: set after the game's own reset
+                    self.vars.update(self.pending_setup)
+                    self.pending_setup = None
                 self._draw()
                 self.frame += 1
             n += 1
