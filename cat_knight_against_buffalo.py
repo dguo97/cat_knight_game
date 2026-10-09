@@ -125,14 +125,77 @@ def arrow_cycle(arrow, effect=None, clear_fx=False):
             arrow.turn(rand(0, 50))
             if arrow.touching(S['角色1']):
                 arrow.hide()
-                V['1 POWER'] = add(V.get('1 POWER', 0), -10)
-                V['1 TIME'] = add(V.get('1 TIME', 0), -10)
+                V['1 POWER'] = add(V.get('1 POWER', 0), -10 * V['hit_scale'])
+                V['1 TIME'] = add(V.get('1 TIME', 0), -10 * V['hit_scale'])
             if arrow_blocked(arrow):
                 if (yield from arrow_hit_blocker(arrow)):
                     return True
             yield
     arrow.hide()
     return False
+
+# ---- difficulty ramp and fight statistics
+RAGE_SPEEDUP = 0.6          # the buffalo is up to 60% faster when it is nearly out of blood
+stats = {'start_blood': 10000}      # filled in a moment after the game starts (Easy mode changes it)
+
+def rage():
+    """0.0 at the start of the fight -> 1.0 when the buffalo is almost out of blood"""
+    start = max(1, stats['start_blood'])
+    return max(0.0, min(1.0, 1 - V['2 BLOOD'] / start))
+
+def buf_pace():
+    """buffalo speed multiplier: the mode's own setting, plus the speed-up as its blood drops"""
+    return V['buf_speed'] * (1 + RAGE_SPEEDUP * rage())
+
+# ---- held-key attacks (A shield, S sword, R heavy shield, E heavy sword)
+HOLD_COST = {'a': 12, 's': 15, 'r': 5, 'e': 10}      # POWER used per second while the key is held
+HOLD_TIME_COST = 0.25                                # TIME used per second while the key is held
+
+def hold_attack(sprite, key, dx, dy, form4_only=False, min_start=5, on_touch=None):
+    """The sprite follows the cat while `key` is held and drains POWER/TIME the whole time.
+    It drops when POWER runs out and can't be raised again until the key is released."""
+    cat = S['角色1']
+    active = locked = False
+    while True:
+        want = stage.key_pressed(key) and (not form4_only or cat.costume_index == 4)
+        if not want:
+            active = locked = False
+        elif not active and not locked and V['1 POWER'] >= min_start:
+            active = True
+        if active and V['1 POWER'] <= 0:
+            active, locked = False, True
+        if active:
+            sprite.show()
+            sprite.set_heading(cat.heading)
+            side = -1 if cat.heading == -90 else 1
+            sprite.goto(cat.x + side * dx, cat.y - dy)
+            if on_touch and sprite.touching(S['角色2']):
+                on_touch()
+            V['1 POWER'] = max(0, V['1 POWER'] - HOLD_COST[key] / FPS)
+            V['1 TIME'] = V['1 TIME'] - HOLD_TIME_COST / FPS
+        else:
+            sprite.hide()
+        yield
+
+def sword_hit():                 # S: damage depends on the cat's form
+    V['2 BLOOD'] = add(V.get('2 BLOOD', 0), -10 * abs(S['角色1'].costume_index - 1.75) ** 0.5)
+
+def heavy_sword_hit():           # E (form 4)
+    V['2 BLOOD'] = add(V.get('2 BLOOD', 0), -200)
+
+# ---- hint line: attacks you can't afford right now are greyed out
+def hint_segments():
+    grey, ok, no = (110, 110, 110), (20, 20, 20), (200, 200, 200)
+    p = V['1 POWER']
+    ready = S['角色2'].size == 100
+    segs = [('F1 help   arrows move   1 2 3 form   ', grey)]
+    for label, can in (('Z', p > 4), ('X', p > 9), ('F', p > 0 and ready), ('D', p > 9)):
+        segs.append((label + ' ', ok if can else no))
+    if S['角色1'].costume_index == 1:
+        segs.append(('G ', ok if (p > 99 and ready) else no))
+    segs.append(('SPACE', ok if p > 79 else no))
+    segs.append((' attack', grey))
+    return segs
 
 # ===================================================================== stage scripts
 stage_t = StageTarget(stage)
@@ -158,7 +221,7 @@ def stage_script_1(self):
     while not (stage.key_pressed('p') and stage.key_pressed('q')):
         yield
     while True:
-        yield from wait(stage, rand(0, 5))
+        yield from wait(stage, rand(0, 5) / (1 + rage()))       # arrows come more often as the buffalo weakens
         V['PQ'] = 1
         yield from wait(stage, rand(0, 10))
         V['PQ'] = 0
@@ -195,11 +258,18 @@ def stage_script_5(self):
     while not (stage.key_pressed('u') and stage.key_pressed('l')):
         yield
     while True:
-        yield from wait(stage, rand(1, 10))
+        yield from wait(stage, rand(1, 10) / (1 + rage()))      # shorter calm periods as the buffalo weakens
         V['OZ'] = 1
         yield from wait(stage, rand(1, 10))
         V['OZ'] = 0
         yield
+
+@stage.on_flag(stage_t)
+def stage_script_6(self):
+    if False: yield          # (makes this function a generator)
+    yield
+    yield
+    stats['start_blood'] = V['2 BLOOD']
 
 # ===================================================================== sprites
 # (created back-to-front, i.e. later sprites are drawn on top)
@@ -327,26 +397,7 @@ sp38 = stage.add_sprite('角色69', [
 @stage.on_flag(sp38)
 def script_38_1(self):
     if False: yield          # (makes this function a generator)
-    while True:
-        if stage.key_pressed('a'):
-            if gt(V['1 POWER'], 4):
-                if eq(S['角色1'].attr('direction'), -90):
-                    self.show()
-                    self.set_heading(S['角色1'].attr('direction'))
-                    while not (not stage.key_pressed('a')):
-                        self.goto(sub(S['角色1'].attr('x position'), 140), sub(S['角色1'].attr('y position'), 68))
-                        yield
-                if (eq(S['角色1'].attr('direction'), 90) or (eq(S['角色1'].attr('direction'), 0) or eq(S['角色1'].attr('direction'), 180))):
-                    self.show()
-                    self.set_heading(S['角色1'].attr('direction'))
-                    while not (not stage.key_pressed('a')):
-                        self.goto(add(S['角色1'].attr('x position'), 140), sub(S['角色1'].attr('y position'), 68))
-                        yield
-                V['1 POWER'] = add(V.get('1 POWER', 0), -5)
-                V['1 TIME'] = add(V.get('1 TIME', 0), -0.1)
-        else:
-            self.hide()
-        yield
+    yield from hold_attack(self, 'a', 140, 68)
 
 # ---------------------------------------------------------------- 角色70
 sp37 = stage.add_sprite('角色70', [
@@ -362,30 +413,7 @@ def script_37_1(self):
 @stage.on_flag(sp37)
 def script_37_2(self):
     if False: yield          # (makes this function a generator)
-    while True:
-        if gt(V['1 POWER'], 4):
-            if stage.key_pressed('s'):
-                if eq(S['角色1'].attr('direction'), -90):
-                    self.show()
-                    self.set_heading(S['角色1'].attr('direction'))
-                    while not ((not stage.key_pressed('s')) or (not eq(S['角色70'].attr('direction'), S['角色1'].attr('direction')))):
-                        self.goto(sub(S['角色1'].attr('x position'), 85), sub(S['角色1'].attr('y position'), 20))
-                        if self.touching(S['角色2']):
-                            V['2 BLOOD'] = add(V.get('2 BLOOD', 0), mul(-10, compute('sqrt', compute('abs', sub(S['角色1'].attr('costume #'), 1.75)))))
-                        yield
-                if (eq(S['角色1'].attr('direction'), 90) or (eq(S['角色1'].attr('direction'), 0) or eq(S['角色1'].attr('direction'), 180))):
-                    self.show()
-                    self.set_heading(S['角色1'].attr('direction'))
-                    while not ((not stage.key_pressed('s')) or (not eq(S['角色70'].attr('direction'), S['角色1'].attr('direction')))):
-                        self.goto(add(S['角色1'].attr('x position'), 85), sub(S['角色1'].attr('y position'), 20))
-                        if self.touching(S['角色2']):
-                            V['2 BLOOD'] = add(V.get('2 BLOOD', 0), mul(-10, compute('sqrt', compute('abs', sub(S['角色1'].attr('costume #'), 1.75)))))
-                        yield
-                V['1 POWER'] = add(V.get('1 POWER', 0), -5)
-                V['1 TIME'] = add(V.get('1 TIME', 0), -0.1)
-            else:
-                self.hide()
-        yield
+    yield from hold_attack(self, 's', 85, 20, on_touch=sword_hit)
 
 # ---------------------------------------------------------------- 角色72
 sp36 = stage.add_sprite('角色72', [
@@ -470,7 +498,7 @@ def script_34_2(self):
                         return
                     self.point_towards(S['角色1'])
                     if (((not self.touching(S['角色69'])) or (not self.touching(S['角色101']))) or (not self.touching(S['角色71']))):
-                        self.move(10 * V['buf_speed'])
+                        self.move(10 * buf_pace())
                     if self.touching(S['角色1']):
                         if ((not self.touching(S['角色69'])) or (not self.touching(S['角色101']))):
                             if gt(V['1 POWER'], 2):
@@ -486,7 +514,7 @@ def script_34_2(self):
                     if self.touching(S['角色72']):
                         return
                     if (not self.touching(S['角色71'])):
-                        self.move(rand(10, -10) * V['buf_speed'])
+                        self.move(rand(10, -10) * buf_pace())
                         self.bounce_off_edge()
                         if self.touching(S['角色1']):
                             if ((not self.touching(S['角色69'])) or (not self.touching(S['角色101']))):
@@ -888,31 +916,7 @@ def script_21_1(self):
 @stage.on_flag(sp21)
 def script_21_2(self):
     if False: yield          # (makes this function a generator)
-    while True:
-        if eq(S['角色1'].attr('costume #'), 4):
-            if gt(V['1 POWER'], 0):
-                if stage.key_pressed('e'):
-                    if eq(S['角色1'].attr('direction'), -90):
-                        self.show()
-                        self.set_heading(S['角色1'].attr('direction'))
-                        while not ((not stage.key_pressed('e')) or (not eq(S['角色100'].attr('direction'), S['角色1'].attr('direction')))):
-                            self.goto(sub(S['角色1'].attr('x position'), 85), sub(S['角色1'].attr('y position'), 20))
-                            if self.touching(S['角色2']):
-                                V['2 BLOOD'] = add(V.get('2 BLOOD', 0), -200)
-                            yield
-                    if (eq(S['角色1'].attr('direction'), 90) or (eq(S['角色1'].attr('direction'), 0) or eq(S['角色1'].attr('direction'), 180))):
-                        self.show()
-                        self.set_heading(S['角色1'].attr('direction'))
-                        while not ((not stage.key_pressed('e')) or (not eq(S['角色100'].attr('direction'), S['角色1'].attr('direction')))):
-                            self.goto(add(S['角色1'].attr('x position'), 85), sub(S['角色1'].attr('y position'), 20))
-                            if self.touching(S['角色2']):
-                                V['2 BLOOD'] = add(V.get('2 BLOOD', 0), -200)
-                            yield
-                    V['1 POWER'] = add(V.get('1 POWER', 0), -1)
-                    V['1 TIME'] = add(V.get('1 TIME', 0), -0.1)
-                else:
-                    self.hide()
-        yield
+    yield from hold_attack(self, 'e', 85, 20, form4_only=True, min_start=1, on_touch=heavy_sword_hit)
 
 # ---------------------------------------------------------------- 角色101
 sp20 = stage.add_sprite('角色101', [
@@ -923,27 +927,7 @@ sp20 = stage.add_sprite('角色101', [
 @stage.on_flag(sp20)
 def script_20_1(self):
     if False: yield          # (makes this function a generator)
-    while True:
-        if eq(S['角色1'].attr('costume #'), 4):
-            if stage.key_pressed('r'):
-                if gt(V['1 POWER'], 0):
-                    if eq(S['角色1'].attr('direction'), -90):
-                        self.show()
-                        self.set_heading(S['角色1'].attr('direction'))
-                        while not (not stage.key_pressed('r')):
-                            self.goto(sub(S['角色1'].attr('x position'), 140), sub(S['角色1'].attr('y position'), 68))
-                            yield
-                    if (eq(S['角色1'].attr('direction'), 90) or (eq(S['角色1'].attr('direction'), 0) or eq(S['角色1'].attr('direction'), 180))):
-                        self.show()
-                        self.set_heading(S['角色1'].attr('direction'))
-                        while not (not stage.key_pressed('r')):
-                            self.goto(add(S['角色1'].attr('x position'), 140), sub(S['角色1'].attr('y position'), 68))
-                            yield
-                    V['1 POWER'] = add(V.get('1 POWER', 0), -1)
-                    V['1 TIME'] = add(V.get('1 TIME', 0), -0.1)
-            else:
-                self.hide()
-        yield
+    yield from hold_attack(self, 'r', 140, 68, form4_only=True, min_start=1)
 
 # ---------------------------------------------------------------- 角色102
 sp19 = stage.add_sprite('角色102', [
@@ -1390,8 +1374,8 @@ def script_06_1(self):
                     self.bounce_off_edge()
                     self.move(25)
                     if self.touching(S['角色1']):
-                        V['1 POWER'] = add(V.get('1 POWER', 0), -10)
-                        V['1 TIME'] = add(V.get('1 TIME', 0), -30)
+                        V['1 POWER'] = add(V.get('1 POWER', 0), -10 * V['hit_scale'])
+                        V['1 TIME'] = add(V.get('1 TIME', 0), -30 * V['hit_scale'])
                         self.goto_sprite(S['角色2'])
                     if (((self.touching(S['角色3']) or self.touching(S['角色67'])) or self.touching(S['角色69'])) or (self.touching(S['角色72']) or (self.touching(S['角色101']) or self.touching(S['角色71'])))):
                         self.goto_sprite(S['角色2'])
@@ -1439,8 +1423,8 @@ def script_05_2(self):
                     self.move(10)
                     if self.touching(S['角色1']):
                         self.hide()
-                        V['1 POWER'] = add(V.get('1 POWER', 0), -10)
-                        V['1 TIME'] = add(V.get('1 TIME', 0), -5)
+                        V['1 POWER'] = add(V.get('1 POWER', 0), -10 * V['hit_scale'])
+                        V['1 TIME'] = add(V.get('1 TIME', 0), -5 * V['hit_scale'])
                     if (((self.touching(S['角色3']) or self.touching(S['角色67'])) or self.touching(S['角色69'])) or (self.touching(S['角色71']) or (self.touching(S['角色72']) or ((self.touching(S['角色101']) or (self.touching(S['角色99']) or self.touching(S['角色100']))) or self.touching(S['角色102']))))):
                         self.goto_sprite(S['角色2'])
                         self.hide()
@@ -1628,7 +1612,7 @@ stage.help_pages = [
         'your 1 TIME runs out.  1 POWER refills by itself.',
         '#CHOOSE HOW TO START',
         'ENTER\tNormal: the buffalo just wanders about',
-        'E\tEasy: more time, weaker buffalo, gentle bumps',
+        'E\tEasy: more time, weaker buffalo, gentle hits',
         'B\tBattle: the buffalo charges at you',
         'A\tHard: it charges AND arrows rain down',
         '#QUICK CONTROLS',
@@ -1650,6 +1634,7 @@ stage.help_pages = [
         'Each special attack uses POWER (max 100).',
         'POWER refills by about 10 every second.',
         'The buffalo drains your TIME if it bumps you.',
+        'It gets faster and angrier as its blood drops.',
     ]),
     ('SPECIAL ATTACKS', [
         '#COST IN POWER  /  DAMAGE',
@@ -1657,6 +1642,8 @@ stage.help_pages = [
         'Z\tFire a bolt ahead: 5 power, 200 damage',
         'X\tHoming shot: 10 power, 300 damage',
         'D\tSummon an attack (differs per form): 10 power',
+        'A  S\tHold: shield / sword.  They use POWER and TIME',
+        '\tthe whole time you hold them.',
         'SPACE\tBig homing blast: 80 power, 2500 damage',
         '\t...but it halves your TIME!',
         'G\tForm 1 only, 100 power: buffalo blood / 99,',
@@ -1672,6 +1659,7 @@ stage.help_pages = [
         "T\tDrain: takes 80% of the buffalo's blood into",
         '\tyour POWER and TIME',
         'W\tHoming swarm: 30 damage per hit',
+        'R  E\tHold: heavy shield / heavy sword',
     ]),
     ('PLANE MODES', [
         '#PLANE 1  -  hold H + E + L + P together',
@@ -1700,7 +1688,17 @@ def end_banner():
     if stage.stopped:
         return 'YOU WIN!' if S['角色66'].costume_index == 2 else 'YOU LOSE'
 stage.banner = end_banner
-stage.hint = 'F1 help   arrows move   1 2 3 form   Z X F D SPACE attack'
+stage.hint = hint_segments      # (greys out attacks you can't afford right now)
+
+def end_details():
+    secs = stage.stop_frame / FPS
+    if S['角色66'].costume_index == 2:
+        return ['Won in %.1f s with %d TIME left' % (secs, max(0, V['1 TIME']))]
+    left = max(0, V['2 BLOOD'])
+    pct = 100 * left / max(1, stats['start_blood'])
+    return ['Time ran out after %d s' % secs,
+            'The buffalo had %d blood left (%d%%)' % (left, pct)]
+stage.banner_detail = end_details
 
 
 if __name__ == "__main__":

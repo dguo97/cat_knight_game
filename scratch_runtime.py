@@ -28,7 +28,10 @@ FPS = 60                      # Scratch 1.4 redraws roughly this often
 FENCE = True                  # keep sprites from leaving the stage completely
 
 # how to start this program again (used by the restart key); captured before the game changes directory
-_LAUNCH_CMD = [sys.executable, os.path.abspath(sys.argv[0])] + sys.argv[1:]
+if getattr(sys, 'frozen', False):          # running as a PyInstaller .exe: relaunch the exe itself
+    _LAUNCH_CMD = [sys.executable] + sys.argv[1:]
+else:
+    _LAUNCH_CMD = [sys.executable, os.path.abspath(sys.argv[0])] + sys.argv[1:]
 _LAUNCH_CWD = os.getcwd()
 
 
@@ -571,6 +574,7 @@ class Stage:
         self.stop_frame = 0       # frame on which the game ended (win/lose)
         self.pending_setup = None # variable overrides applied right after the game's own set-up runs
         self.banner = None        # optional function -> text shown big in the centre
+        self.banner_detail = None # optional function -> list of small text lines shown under the big banner
         # help / title screen (paged overlay; the game is paused while it is open)
         self.help_pages = []      # [(title, [lines])]; a line starting with '#' is a sub-heading
         self.start_options = []   # [(key letter, label, [keys held for a moment at the start])]
@@ -634,7 +638,10 @@ class Stage:
     def restart(self):
         """start a fresh copy of the game (back to the title screen) and close this one"""
         try:
-            subprocess.Popen(_LAUNCH_CMD, cwd=_LAUNCH_CWD)
+            env = os.environ.copy()
+            if getattr(sys, 'frozen', False):
+                env['PYINSTALLER_RESET_ENVIRONMENT'] = '1'     # the new exe unpacks its own temp folder
+            subprocess.Popen(_LAUNCH_CMD, cwd=_LAUNCH_CWD, env=env)
         except OSError:
             return                      # could not relaunch: stay on the end screen
         self.running = False
@@ -687,11 +694,23 @@ class Stage:
                 w.draw(self.screen, self.font)
         if self.banner:
             text = self.banner()
+            lines = []
+            if text and self.banner_detail:
+                try:
+                    lines = list(self.banner_detail())
+                except Exception:                      # a broken detail function must never crash the game
+                    lines = []
+            y0 = STAGE_H // 2 + 44
+            for i, line in enumerate(lines):           # small lines under the big banner
+                for dx, dy, col in ((1, 1, (0, 0, 0)), (0, 0, (255, 255, 255))):
+                    img = self.help_font.render(str(line), True, col)
+                    self.screen.blit(img, ((STAGE_W - img.get_width()) // 2 + dx, y0 + 20 * i + dy))
             if text and self.stopped and self.frame - self.stop_frame > FPS:
                 msg = "Press R or ENTER to play again   (Esc quits)"
+                y = y0 + 20 * len(lines) + (8 if lines else 0)
                 for dx, dy, col in ((1, 1, (0, 0, 0)), (0, 0, (255, 255, 255))):
                     img = self.help_font.render(msg, True, col)
-                    self.screen.blit(img, ((STAGE_W - img.get_width()) // 2 + dx, STAGE_H // 2 + 44 + dy))
+                    self.screen.blit(img, ((STAGE_W - img.get_width()) // 2 + dx, y + dy))
             if text:
                 for dx, dy, col in ((3, 3, (0, 0, 0)), (0, 0, (220, 30, 30))):
                     img = self.big_font.render(text, True, col)
@@ -700,8 +719,13 @@ class Stage:
         if self.help_visible:
             self._draw_help()
         elif self.hint:
-            img = self.small_font.render(self.hint, True, (110, 110, 110))
-            self.screen.blit(img, (STAGE_W - img.get_width() - 6, STAGE_H - img.get_height() - 4))
+            # hint is a string, or a function returning [(text, colour), ...] so parts can be greyed out
+            segs = self.hint() if callable(self.hint) else [(self.hint, (110, 110, 110))]
+            imgs = [self.small_font.render(txt, True, col) for txt, col in segs]
+            x = STAGE_W - sum(i.get_width() for i in imgs) - 6
+            for img in imgs:
+                self.screen.blit(img, (x, STAGE_H - img.get_height() - 4))
+                x += img.get_width()
         self._present()
 
     def _present(self):
