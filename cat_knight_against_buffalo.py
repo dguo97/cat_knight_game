@@ -36,6 +36,8 @@ V['DIRECTION'] = 262
 V['direction 1'] = 12
 V['OZ'] = 0
 V['Chaos'] = 0
+V['hit_scale'] = 1      # how hard buffalo bumps drain TIME (Easy mode lowers it)
+V['buf_speed'] = 1      # buffalo speed multiplier (Easy mode lowers it)
 
 # ===================================================================== stage scripts
 stage_t = StageTarget(stage)
@@ -373,12 +375,12 @@ def script_34_2(self):
                         return
                     self.point_towards(S['角色1'])
                     if (((not self.touching(S['角色69'])) or (not self.touching(S['角色101']))) or (not self.touching(S['角色71']))):
-                        self.move(10)
+                        self.move(10 * V['buf_speed'])
                     if self.touching(S['角色1']):
                         if ((not self.touching(S['角色69'])) or (not self.touching(S['角色101']))):
                             if gt(V['1 POWER'], 2):
                                 V['1 POWER'] = add(V.get('1 POWER', 0), -2)
-                            V['1 TIME'] = add(V.get('1 TIME', 0), -3)
+                            V['1 TIME'] = add(V.get('1 TIME', 0), -3 * V['hit_scale'])
                 yield
             if (not (self.touching(S['角色71']) and eq(S['角色71'].attr('costume #'), 5))):
                 yield from glide(stage, self, 0.5, self.x, -120)
@@ -389,13 +391,13 @@ def script_34_2(self):
                     if self.touching(S['角色72']):
                         return
                     if (not self.touching(S['角色71'])):
-                        self.move(rand(10, -10))
+                        self.move(rand(10, -10) * V['buf_speed'])
                         self.bounce_off_edge()
                         if self.touching(S['角色1']):
                             if ((not self.touching(S['角色69'])) or (not self.touching(S['角色101']))):
                                 if gt(V['1 POWER'], 2):
                                     V['1 POWER'] = add(V.get('1 POWER', 0), -2)
-                                V['1 TIME'] = add(V.get('1 TIME', 0), -1)
+                                V['1 TIME'] = add(V.get('1 TIME', 0), -1 * V['hit_scale'])
                     yield
         yield
 
@@ -1853,14 +1855,17 @@ stage.help_pages = [
         "Drain the buffalo's blood (2 BLOOD) to 0 before",
         'your 1 TIME runs out.  1 POWER refills by itself.',
         '#CHOOSE HOW TO START',
-        'ENTER\tEasy: the buffalo just wanders about',
+        'ENTER\tNormal: the buffalo just wanders about',
+        'E\tEasy: more time, weaker buffalo, gentle bumps',
         'B\tBattle: the buffalo charges at you',
         'A\tHard: it charges AND arrows rain down',
+        '#QUICK CONTROLS',
+        'ARROWS\tRun around.  Bump the buffalo to hurt it.',
+        '1 2 3\tSwitch form',
+        'Z X F D\tAttacks      SPACE  big blast',
         '#',
-        'Press F1 at any time to open this help again.',
-        'Esc quits.',
-        '',
-        'Use the <- -> keys to read about the controls.',
+        'Use the <- -> keys to read about every control.',
+        'F1 help any time    F11 fullscreen    Esc quits',
     ]),
     ('MOVING AND FORMS', [
         '#MOVE',
@@ -1910,6 +1915,8 @@ stage.help_pages = [
 ]
 # letter on the title screen -> label, keys that get "pressed" for the player at the start
 stage.start_options = [
+    # Easy: wandering buffalo (like Normal) but slower, only 6000 blood, 300 TIME, and bumps hurt a quarter as much
+    ('E', 'Easy', [], {'1 TIME': 300, '2 BLOOD': 6000, 'hit_scale': 0.25, 'buf_speed': 0.6}),
     ('B', 'Battle', ['u', 'l']),                # same as holding U+L: the buffalo charges at you
     ('A', 'Hard', ['u', 'l', 'p', 'q']),        # ... and P+Q: arrows rain down
 ]
@@ -1921,6 +1928,7 @@ def end_banner():
     if stage.stopped:
         return 'YOU WIN!' if S['角色66'].costume_index == 2 else 'YOU LOSE'
 stage.banner = end_banner
+stage.hint = 'F1 help   arrows move   1 2 3 form   Z X F D SPACE attack'
 
 
 if __name__ == "__main__":

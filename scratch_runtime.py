@@ -137,6 +137,10 @@ def _build_keymap():
     return km
 
 
+# numpad digits count as the matching number-row digits
+_KP_ALIAS = {getattr(pygame, "K_KP" + d): getattr(pygame, "K_" + d) for d in "0123456789"}
+
+
 # --------------------------------------------------------------------------
 # threads
 # --------------------------------------------------------------------------
@@ -727,6 +731,7 @@ class Stage:
                 if ev.type == pygame.QUIT:
                     self.running = False
                 elif ev.type == pygame.KEYDOWN:
+                    ev.key = _KP_ALIAS.get(ev.key, ev.key)
                     if self.help_visible:
                         self._help_key(ev.key)
                     elif ev.key == pygame.K_F1 and self.help_pages:
@@ -736,7 +741,7 @@ class Stage:
                     else:
                         self.keys_down.add(ev.key)
                 elif ev.type == pygame.KEYUP:
-                    self.keys_down.discard(ev.key)
+                    self.keys_down.discard(_KP_ALIAS.get(ev.key, ev.key))
                 elif ev.type == pygame.WINDOWFOCUSLOST:
                     self.keys_down.clear()
             if self.help_visible:                  # paused: game time stands still
