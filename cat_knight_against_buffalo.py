@@ -39,6 +39,101 @@ V['Chaos'] = 0
 V['hit_scale'] = 1      # how hard buffalo bumps drain TIME (Easy mode lowers it)
 V['buf_speed'] = 1      # buffalo speed multiplier (Easy mode lowers it)
 
+# ---- FIX: shared flight loop for plane shots.  It always ends (step cap), also when the edge
+# fence pins the shot, stops right after a hit, and ends if the shot touches the cat.
+def fly_shot(shot, speed, damage):
+    for _ in range(int(700 / speed) + 1):
+        px, py = shot.x, shot.y
+        shot.move(speed)
+        if shot.touching(S['角色2']):
+            V['2 BLOOD'] = add(V.get('2 BLOOD', 0), -damage)
+            return
+        if shot.touching(S['角色1']):
+            return
+        if abs(shot.x) > 239 or abs(shot.y) > 179 or abs(shot.x - px) + abs(shot.y - py) < 1:
+            return
+        yield
+
+# ---- REFACTOR: shared code for the cat's four arrow-key walk scripts
+def cat_walk(cat, heading, key):
+    """Walk in `heading` while `key` is held; speed and bump damage depend on the cat's form."""
+    cat.set_heading(heading)
+    while stage.key_pressed(key):
+        if cat.costume_index == 1:
+            cat.move(3)
+            if cat.touching(S['角色2']):
+                V['2 BLOOD'] = add(V.get('2 BLOOD', 0), -3)
+                cat.move(-2.5)
+        if cat.costume_index == 2:
+            cat.move(5)
+            if cat.touching(S['角色2']):
+                V['2 BLOOD'] = add(V.get('2 BLOOD', 0), -2)
+                cat.move(-4.5)
+        if cat.costume_index == 3:
+            for _ in range(rep(5)):
+                cat.move(2)
+                if cat.touching(S['角色2']):
+                    V['2 BLOOD'] = add(V.get('2 BLOOD', 0), -5)
+                    cat.move(-1.5)
+                yield
+        if cat.costume_index == 4:
+            cat.move(10)
+            if cat.touching(S['角色2']):
+                V['2 BLOOD'] = add(V.get('2 BLOOD', 0), -50)
+        yield
+
+# ---- REFACTOR: shared code for the five buffalo-arrow scripts (角色91, 92, 94, 95, 88)
+ARROW_BLOCKERS = ['角色3', '角色67', '角色69', '角色71', '角色72', '角色101', '角色99', '角色100', '角色102']
+
+def arrow_blocked(arrow):
+    return any(arrow.touching(S[n]) for n in ARROW_BLOCKERS)
+
+def arrow_hit_blocker(arrow):
+    """The arrow ran into one of the cat's attacks.  Returns True if the arrow is destroyed for good."""
+    if arrow.touching(S['角色102']) or arrow.touching(S['角色99']):     # the form-4 swarm pixelates it
+        for _ in range(rep(200)):
+            arrow.change_effect('pixelate', 1)
+            yield
+        arrow.hide()
+        return True
+    arrow.goto_sprite(S['角色2'])                                       # otherwise it goes back to the buffalo
+    arrow.hide()
+    return False
+
+def arrow_cycle(arrow, effect=None, clear_fx=False):
+    """One volley of an arrow: shoot out from the buffalo, then wander around and hurt the cat on contact.
+    `effect` is the visual effect it spins through while flying out; returns True if it was destroyed."""
+    if clear_fx:
+        arrow.clear_effects()
+    yield from wait(stage, rand(0, 5))
+    arrow.show()
+    arrow.goto_sprite(S['角色2'])
+    arrow.set_heading(0)
+    if (not arrow.touching(S['角色71'])) and (not arrow.touching(S['角色72'])):
+        for _ in range(rep(20)):
+            if effect:
+                arrow.change_effect(effect, rand(1, 10))
+            arrow.move(10)
+            if arrow_blocked(arrow):
+                if (yield from arrow_hit_blocker(arrow)):
+                    return True
+            yield
+        arrow.set_heading(rand(-180, 180))
+        for _ in range(rep(rand(30, 1000))):
+            arrow.bounce_off_edge()
+            arrow.move(rand(50, 5))
+            arrow.turn(rand(0, 50))
+            if arrow.touching(S['角色1']):
+                arrow.hide()
+                V['1 POWER'] = add(V.get('1 POWER', 0), -10)
+                V['1 TIME'] = add(V.get('1 TIME', 0), -10)
+            if arrow_blocked(arrow):
+                if (yield from arrow_hit_blocker(arrow)):
+                    return True
+            yield
+    arrow.hide()
+    return False
+
 # ===================================================================== stage scripts
 stage_t = StageTarget(stage)
 
@@ -173,7 +268,7 @@ def script_40_2(self):
             self.move(10)
             if self.touching(S['角色2']):
                 V['2 BLOOD'] = add(V.get('2 BLOOD', 0), -300)
-                self.hide()
+                break
             yield
         self.hide()
         return
@@ -337,12 +432,7 @@ def script_35_1(self):
             self.goto_sprite(S['角色73'])
             self.show()
             self.set_heading(S['角色73'].attr('direction'))
-            while not (((gt(S['角色74'].attr('x position'), 239) or lt(S['角色74'].attr('y position'), -179)) or (gt(S['角色74'].attr('y position'), 179) or lt(S['角色74'].attr('x position'), -239))) or (self.touching(S['角色1']) or self.touching(S['角色2']))):
-                self.move(10)
-                if self.touching(S['角色2']):
-                    V['2 BLOOD'] = add(V.get('2 BLOOD', 0), -50)
-                    self.hide()
-                yield
+            yield from fly_shot(self, 10, 50)
             self.hide()
             V['laser1'] = 0
 
@@ -426,12 +516,7 @@ def script_33_2(self):
             self.goto_sprite(S['角色73'])
             self.show()
             self.set_heading(S['角色73'].attr('direction'))
-            while not (((gt(S['角色78'].attr('x position'), 239) or lt(S['角色78'].attr('y position'), -179)) or (gt(S['角色78'].attr('y position'), 179) or lt(S['角色78'].attr('x position'), -239))) or (self.touching(S['角色1']) or self.touching(S['角色2']))):
-                self.move(10)
-                if self.touching(S['角色2']):
-                    V['2 BLOOD'] = add(V.get('2 BLOOD', 0), -50)
-                    self.hide()
-                yield
+            yield from fly_shot(self, 10, 50)
             self.hide()
             V['laser2'] = 0
 
@@ -448,12 +533,7 @@ def script_32_1(self):
         self.goto_sprite(S['角色73'])
         self.show()
         self.set_heading(S['角色73'].attr('direction'))
-        while not (((gt(S['角色79'].attr('x position'), 239) or lt(S['角色79'].attr('y position'), -179)) or (gt(S['角色79'].attr('y position'), 179) or lt(S['角色79'].attr('x position'), -239))) or (self.touching(S['角色1']) or self.touching(S['角色2']))):
-            self.move(3)
-            if self.touching(S['角色2']):
-                V['2 BLOOD'] = add(V.get('2 BLOOD', 0), -200)
-                self.hide()
-            yield
+        yield from fly_shot(self, 3, 200)
         self.hide()
         yield from wait(stage, 5)
 
@@ -475,12 +555,7 @@ def script_31_1(self):
         self.goto_sprite(S['角色73'])
         self.show()
         self.set_heading(S['角色73'].attr('direction'))
-        while not (((gt(S['角色80'].attr('x position'), 239) or lt(S['角色80'].attr('y position'), -179)) or (gt(S['角色80'].attr('y position'), 179) or lt(S['角色80'].attr('x position'), -239))) or (self.touching(S['角色1']) or self.touching(S['角色2']))):
-            self.move(3)
-            yield
-        if self.touching(S['角色2']):
-            V['2 BLOOD'] = add(V.get('2 BLOOD', 0), -500)
-            self.hide()
+        yield from fly_shot(self, 3, 500)
         self.hide()
         yield from wait(stage, 1)
 
@@ -508,12 +583,7 @@ def script_30_2(self):
             self.goto_sprite(S['角色73'])
             self.show()
             self.set_heading(S['角色73'].attr('direction'))
-            while not (((gt(S['角色81'].attr('x position'), 239) or lt(S['角色81'].attr('y position'), -179)) or (gt(S['角色81'].attr('y position'), 179) or lt(S['角色81'].attr('x position'), -239))) or (self.touching(S['角色1']) or self.touching(S['角色2']))):
-                self.move(10)
-                if self.touching(S['角色2']):
-                    V['2 BLOOD'] = add(V.get('2 BLOOD', 0), -50)
-                    self.hide()
-                yield
+            yield from fly_shot(self, 10, 50)
             self.hide()
 
 # ---------------------------------------------------------------- 角色73
@@ -593,12 +663,7 @@ def script_28_1(self):
             self.goto_sprite(S['角色82'])
             self.show()
             self.set_heading(S['角色82'].attr('direction'))
-            while not (((gt(S['角色83'].attr('x position'), 239) or lt(S['角色83'].attr('y position'), -179)) or (gt(S['角色83'].attr('y position'), 179) or lt(S['角色83'].attr('x position'), -239))) or (self.touching(S['角色1']) or self.touching(S['角色2']))):
-                self.move(10)
-                if self.touching(S['角色2']):
-                    V['2 BLOOD'] = add(V.get('2 BLOOD', 0), -50)
-                    self.hide()
-                yield
+            yield from fly_shot(self, 10, 50)
             self.hide()
             V['LASER21'] = 0
 
@@ -622,12 +687,7 @@ def script_27_1(self):
             self.goto_sprite(S['角色82'])
             self.show()
             self.set_heading(S['角色82'].attr('direction'))
-            while not (((gt(S['角色84'].attr('x position'), 239) or lt(S['角色84'].attr('y position'), -179)) or (gt(S['角色84'].attr('y position'), 179) or lt(S['角色84'].attr('x position'), -239))) or (self.touching(S['角色1']) or self.touching(S['角色2']))):
-                self.move(10)
-                if self.touching(S['角色2']):
-                    V['2 BLOOD'] = add(V.get('2 BLOOD', 0), -50)
-                    self.hide()
-                yield
+            yield from fly_shot(self, 10, 50)
             self.hide()
             V['LASER22'] = 0
 
@@ -655,12 +715,7 @@ def script_26_2(self):
             self.goto_sprite(S['角色82'])
             self.show()
             self.set_heading(S['角色82'].attr('direction'))
-            while not (((gt(S['角色85'].attr('x position'), 239) or lt(S['角色85'].attr('y position'), -179)) or (gt(S['角色85'].attr('y position'), 179) or lt(S['角色85'].attr('x position'), -239))) or (self.touching(S['角色1']) or self.touching(S['角色2']))):
-                self.move(10)
-                if self.touching(S['角色2']):
-                    V['2 BLOOD'] = add(V.get('2 BLOOD', 0), -50)
-                    self.hide()
-                yield
+            yield from fly_shot(self, 10, 50)
             self.hide()
 
 # ---------------------------------------------------------------- 角色86
@@ -676,12 +731,7 @@ def script_25_1(self):
         self.goto_sprite(S['角色82'])
         self.show()
         self.set_heading(S['角色82'].attr('direction'))
-        while not (((gt(S['角色86'].attr('x position'), 239) or lt(S['角色86'].attr('y position'), -179)) or (gt(S['角色86'].attr('y position'), 179) or lt(S['角色86'].attr('x position'), -239))) or (self.touching(S['角色1']) or self.touching(S['角色2']))):
-            self.move(4)
-            if self.touching(S['角色2']):
-                V['2 BLOOD'] = add(V.get('2 BLOOD', 0), -200)
-                self.hide()
-            yield
+        yield from fly_shot(self, 4, 200)
         self.hide()
         yield from wait(stage, 5)
 
@@ -1083,6 +1133,8 @@ sp11 = stage.add_sprite('角色1', [
 ], costume=3, x=-68.0, y=-72.0, heading=-90.0, size=100.0,
    visible=True, rotation_style='leftRight')
 
+sp11.keep_inside = True      # FIX: the cat can't go half off-screen (so Z/X always have room to fire)
+
 @stage.on_flag(sp11)
 def script_11_1(self):
     if False: yield          # (makes this function a generator)
@@ -1093,86 +1145,17 @@ def script_11_1(self):
 @stage.on_key(sp11, 'right arrow')
 def script_11_2(self):
     if False: yield          # (makes this function a generator)
-    self.set_heading(90)
-    while not (not stage.key_pressed('right arrow')):
-        if eq(S['角色1'].attr('costume #'), 1):
-            self.move(3)
-            if self.touching(S['角色2']):
-                V['2 BLOOD'] = add(V.get('2 BLOOD', 0), -3)
-                self.move(-2.5)
-        if eq(S['角色1'].attr('costume #'), 2):
-            self.move(5)
-            if self.touching(S['角色2']):
-                V['2 BLOOD'] = add(V.get('2 BLOOD', 0), -2)
-                self.move(-4.5)
-        if eq(S['角色1'].attr('costume #'), 3):
-            for _ in range(rep(5)):
-                self.move(2)
-                if self.touching(S['角色2']):
-                    V['2 BLOOD'] = add(V.get('2 BLOOD', 0), -5)
-                    self.move(-1.5)
-                yield
-        if eq(S['角色1'].attr('costume #'), 4):
-            self.move(10)
-            if self.touching(S['角色2']):
-                V['2 BLOOD'] = add(V.get('2 BLOOD', 0), -50)
-        yield
+    yield from cat_walk(self, 90, 'right arrow')
 
 @stage.on_key(sp11, 'down arrow')
 def script_11_3(self):
     if False: yield          # (makes this function a generator)
-    self.set_heading(180)
-    while not (not stage.key_pressed('down arrow')):
-        if eq(S['角色1'].attr('costume #'), 1):
-            self.move(3)
-            if self.touching(S['角色2']):
-                V['2 BLOOD'] = add(V.get('2 BLOOD', 0), -3)
-                self.move(-2.5)
-        if eq(S['角色1'].attr('costume #'), 2):
-            self.move(5)
-            if self.touching(S['角色2']):
-                V['2 BLOOD'] = add(V.get('2 BLOOD', 0), -2)
-                self.move(-4.5)
-        if eq(S['角色1'].attr('costume #'), 3):
-            for _ in range(rep(5)):
-                self.move(2)
-                if self.touching(S['角色2']):
-                    V['2 BLOOD'] = add(V.get('2 BLOOD', 0), -5)
-                    self.move(-1.5)
-                yield
-        if eq(S['角色1'].attr('costume #'), 4):
-            self.move(10)
-            if self.touching(S['角色2']):
-                V['2 BLOOD'] = add(V.get('2 BLOOD', 0), -50)
-        yield
+    yield from cat_walk(self, 180, 'down arrow')
 
 @stage.on_key(sp11, 'up arrow')
 def script_11_4(self):
     if False: yield          # (makes this function a generator)
-    self.set_heading(0)
-    while not (not stage.key_pressed('up arrow')):
-        if eq(S['角色1'].attr('costume #'), 1):
-            self.move(3)
-            if self.touching(S['角色2']):
-                V['2 BLOOD'] = add(V.get('2 BLOOD', 0), -3)
-                self.move(-2.5)
-        if eq(S['角色1'].attr('costume #'), 2):
-            self.move(5)
-            if self.touching(S['角色2']):
-                V['2 BLOOD'] = add(V.get('2 BLOOD', 0), -2)
-                self.move(-4.5)
-        if eq(S['角色1'].attr('costume #'), 3):
-            for _ in range(rep(5)):
-                self.move(2)
-                if self.touching(S['角色2']):
-                    V['2 BLOOD'] = add(V.get('2 BLOOD', 0), -5)
-                    self.move(-1.5)
-                yield
-        if eq(S['角色1'].attr('costume #'), 4):
-            self.move(10)
-            if self.touching(S['角色2']):
-                V['2 BLOOD'] = add(V.get('2 BLOOD', 0), -50)
-        yield
+    yield from cat_walk(self, 0, 'up arrow')
 
 @stage.on_key(sp11, 'f')
 def script_11_5(self):
@@ -1205,30 +1188,7 @@ def script_11_8(self):
 @stage.on_key(sp11, 'left arrow')
 def script_11_9(self):
     if False: yield          # (makes this function a generator)
-    self.set_heading(-90)
-    while not (not stage.key_pressed('left arrow')):
-        if eq(S['角色1'].attr('costume #'), 1):
-            self.move(3)
-            if self.touching(S['角色2']):
-                V['2 BLOOD'] = add(V.get('2 BLOOD', 0), -3)
-                self.move(-2.5)
-        if eq(S['角色1'].attr('costume #'), 2):
-            self.move(5)
-            if self.touching(S['角色2']):
-                V['2 BLOOD'] = add(V.get('2 BLOOD', 0), -2)
-                self.move(-4.5)
-        if eq(S['角色1'].attr('costume #'), 3):
-            for _ in range(rep(5)):
-                self.move(2)
-                if self.touching(S['角色2']):
-                    V['2 BLOOD'] = add(V.get('2 BLOOD', 0), -5)
-                    self.move(-1.5)
-                yield
-        if eq(S['角色1'].attr('costume #'), 4):
-            self.move(10)
-            if self.touching(S['角色2']):
-                V['2 BLOOD'] = add(V.get('2 BLOOD', 0), -50)
-        yield
+    yield from cat_walk(self, -90, 'left arrow')
 
 @stage.on_flag(sp11)
 def script_11_10(self):
@@ -1358,49 +1318,8 @@ def script_08_1(self):
         while not eq(V['PQ'], 1):
             yield
         if eq(S['角色2'].attr('size'), 100):
-            self.clear_effects()
-            yield from wait(stage, rand(0, 5))
-            self.show()
-            self.goto_sprite(S['角色2'])
-            self.set_heading(0)
-            if ((not self.touching(S['角色71'])) and (not self.touching(S['角色72']))):
-                for _ in range(rep(20)):
-                    self.change_effect('whirl', rand(1, 10))
-                    self.move(10)
-                    if (((self.touching(S['角色3']) or self.touching(S['角色67'])) or self.touching(S['角色69'])) or (self.touching(S['角色71']) or (self.touching(S['角色72']) or ((self.touching(S['角色101']) or (self.touching(S['角色99']) or self.touching(S['角色100']))) or self.touching(S['角色102']))))):
-                        if (self.touching(S['角色102']) or self.touching(S['角色99'])):
-                            for _ in range(rep(200)):
-                                self.change_effect('pixelate', 1)
-                                yield
-                            self.hide()
-                            return
-                        self.goto_sprite(S['角色2'])
-                        self.hide()
-                        self.goto_sprite(S['角色2'])
-                        self.hide()
-                    yield
-                self.set_heading(rand(-180, 180))
-                for _ in range(rep(rand(30, 1000))):
-                    self.bounce_off_edge()
-                    self.move(rand(50, 5))
-                    self.turn(rand(0, 50))
-                    if self.touching(S['角色1']):
-                        self.hide()
-                        V['1 POWER'] = add(V.get('1 POWER', 0), -10)
-                        V['1 TIME'] = add(V.get('1 TIME', 0), -10)
-                    if (((self.touching(S['角色3']) or self.touching(S['角色67'])) or self.touching(S['角色69'])) or (self.touching(S['角色71']) or (self.touching(S['角色72']) or ((self.touching(S['角色101']) or (self.touching(S['角色99']) or self.touching(S['角色100']))) or self.touching(S['角色102']))))):
-                        if (self.touching(S['角色102']) or self.touching(S['角色99'])):
-                            for _ in range(rep(200)):
-                                self.change_effect('pixelate', 1)
-                                yield
-                            self.hide()
-                            return
-                        self.goto_sprite(S['角色2'])
-                        self.hide()
-                        self.goto_sprite(S['角色2'])
-                        self.hide()
-                    yield
-            self.hide()
+            if (yield from arrow_cycle(self, 'whirl', True)):
+                return          # destroyed for good (as in the original)
         yield
 
 @stage.on_flag(sp08)
@@ -1428,49 +1347,8 @@ def script_07_1(self):
         while not eq(V['PQ'], 1):
             yield
         if eq(S['角色2'].attr('size'), 100):
-            self.clear_effects()
-            yield from wait(stage, rand(0, 5))
-            self.show()
-            self.goto_sprite(S['角色2'])
-            self.set_heading(0)
-            if ((not self.touching(S['角色71'])) and (not self.touching(S['角色72']))):
-                for _ in range(rep(20)):
-                    self.change_effect('color', rand(1, 10))
-                    self.move(10)
-                    if (((self.touching(S['角色3']) or self.touching(S['角色67'])) or self.touching(S['角色69'])) or (self.touching(S['角色71']) or (self.touching(S['角色72']) or ((self.touching(S['角色101']) or (self.touching(S['角色99']) or self.touching(S['角色100']))) or self.touching(S['角色102']))))):
-                        if (self.touching(S['角色102']) or self.touching(S['角色99'])):
-                            for _ in range(rep(200)):
-                                self.change_effect('pixelate', 1)
-                                yield
-                            self.hide()
-                            return
-                        self.goto_sprite(S['角色2'])
-                        self.hide()
-                        self.goto_sprite(S['角色2'])
-                        self.hide()
-                    yield
-                self.set_heading(rand(-180, 180))
-                for _ in range(rep(rand(30, 1000))):
-                    self.bounce_off_edge()
-                    self.move(rand(50, 5))
-                    self.turn(rand(0, 50))
-                    if self.touching(S['角色1']):
-                        self.hide()
-                        V['1 POWER'] = add(V.get('1 POWER', 0), -10)
-                        V['1 TIME'] = add(V.get('1 TIME', 0), -10)
-                    if (((self.touching(S['角色3']) or self.touching(S['角色67'])) or self.touching(S['角色69'])) or (self.touching(S['角色71']) or (self.touching(S['角色72']) or ((self.touching(S['角色101']) or (self.touching(S['角色99']) or self.touching(S['角色100']))) or self.touching(S['角色102']))))):
-                        if (self.touching(S['角色102']) or self.touching(S['角色99'])):
-                            for _ in range(rep(200)):
-                                self.change_effect('pixelate', 1)
-                                yield
-                            self.hide()
-                            return
-                        self.goto_sprite(S['角色2'])
-                        self.hide()
-                        self.goto_sprite(S['角色2'])
-                        self.hide()
-                    yield
-            self.hide()
+            if (yield from arrow_cycle(self, 'color', True)):
+                return          # destroyed for good (as in the original)
         yield
 
 @stage.on_flag(sp07)
@@ -1624,49 +1502,8 @@ def script_03_1(self):
         while not eq(V['PQ'], 1):
             yield
         if eq(S['角色2'].attr('size'), 100):
-            self.clear_effects()
-            yield from wait(stage, rand(0, 5))
-            self.show()
-            self.goto_sprite(S['角色2'])
-            self.set_heading(0)
-            if ((not self.touching(S['角色71'])) and (not self.touching(S['角色72']))):
-                for _ in range(rep(20)):
-                    self.change_effect('fisheye', rand(1, 10))
-                    self.move(10)
-                    if (((self.touching(S['角色3']) or self.touching(S['角色67'])) or self.touching(S['角色69'])) or (self.touching(S['角色71']) or (self.touching(S['角色72']) or ((self.touching(S['角色101']) or (self.touching(S['角色99']) or self.touching(S['角色100']))) or self.touching(S['角色102']))))):
-                        if (self.touching(S['角色102']) or self.touching(S['角色99'])):
-                            for _ in range(rep(200)):
-                                self.change_effect('pixelate', 1)
-                                yield
-                            self.hide()
-                            return
-                        self.goto_sprite(S['角色2'])
-                        self.hide()
-                        self.goto_sprite(S['角色2'])
-                        self.hide()
-                    yield
-                self.set_heading(rand(-180, 180))
-                for _ in range(rep(rand(30, 1000))):
-                    self.bounce_off_edge()
-                    self.move(rand(50, 5))
-                    self.turn(rand(0, 50))
-                    if self.touching(S['角色1']):
-                        self.hide()
-                        V['1 POWER'] = add(V.get('1 POWER', 0), -10)
-                        V['1 TIME'] = add(V.get('1 TIME', 0), -10)
-                    if (((self.touching(S['角色3']) or self.touching(S['角色67'])) or self.touching(S['角色69'])) or (self.touching(S['角色71']) or (self.touching(S['角色72']) or ((self.touching(S['角色101']) or (self.touching(S['角色99']) or self.touching(S['角色100']))) or self.touching(S['角色102']))))):
-                        if (self.touching(S['角色102']) or self.touching(S['角色99'])):
-                            for _ in range(rep(200)):
-                                self.change_effect('pixelate', 1)
-                                yield
-                            self.hide()
-                            return
-                        self.goto_sprite(S['角色2'])
-                        self.hide()
-                        self.goto_sprite(S['角色2'])
-                        self.hide()
-                    yield
-            self.hide()
+            if (yield from arrow_cycle(self, 'fisheye', True)):
+                return          # destroyed for good (as in the original)
         yield
 
 @stage.on_flag(sp03)
@@ -1694,43 +1531,8 @@ def script_02_1(self):
         while not eq(V['PQ'], 1):
             yield
         if eq(S['角色2'].attr('size'), 100):
-            yield from wait(stage, rand(0, 5))
-            self.show()
-            self.goto_sprite(S['角色2'])
-            self.set_heading(0)
-            if ((not self.touching(S['角色71'])) and (not self.touching(S['角色72']))):
-                for _ in range(rep(20)):
-                    self.move(10)
-                    if (((self.touching(S['角色3']) or self.touching(S['角色67'])) or self.touching(S['角色69'])) or (self.touching(S['角色71']) or (self.touching(S['角色72']) or ((self.touching(S['角色101']) or (self.touching(S['角色99']) or self.touching(S['角色100']))) or self.touching(S['角色102']))))):
-                        if (self.touching(S['角色102']) or self.touching(S['角色99'])):
-                            for _ in range(rep(200)):
-                                self.change_effect('pixelate', 1)
-                                yield
-                            self.hide()
-                            return
-                        self.goto_sprite(S['角色2'])
-                        self.hide()
-                    yield
-                self.set_heading(rand(-180, 180))
-                for _ in range(rep(rand(30, 1000))):
-                    self.bounce_off_edge()
-                    self.move(rand(50, 5))
-                    self.turn(rand(0, 50))
-                    if self.touching(S['角色1']):
-                        self.hide()
-                        V['1 POWER'] = add(V.get('1 POWER', 0), -10)
-                        V['1 TIME'] = add(V.get('1 TIME', 0), -10)
-                    if (((self.touching(S['角色3']) or self.touching(S['角色67'])) or self.touching(S['角色69'])) or (self.touching(S['角色71']) or (self.touching(S['角色72']) or ((self.touching(S['角色101']) or (self.touching(S['角色99']) or self.touching(S['角色100']))) or self.touching(S['角色102']))))):
-                        if (self.touching(S['角色102']) or self.touching(S['角色99'])):
-                            for _ in range(rep(200)):
-                                self.change_effect('pixelate', 1)
-                                yield
-                            self.hide()
-                            return
-                        self.goto_sprite(S['角色2'])
-                        self.hide()
-                    yield
-            self.hide()
+            if (yield from arrow_cycle(self, None, False)):
+                return          # destroyed for good (as in the original)
         yield
 
 @stage.on_flag(sp02)
@@ -1760,43 +1562,8 @@ def script_01_1(self):
         while not eq(V['PQ'], 1):
             yield
         if eq(S['角色2'].attr('size'), 100):
-            yield from wait(stage, rand(0, 5))
-            self.show()
-            self.goto_sprite(S['角色2'])
-            self.set_heading(0)
-            if ((not self.touching(S['角色71'])) and (not self.touching(S['角色72']))):
-                for _ in range(rep(20)):
-                    self.move(10)
-                    if (((self.touching(S['角色3']) or self.touching(S['角色67'])) or self.touching(S['角色69'])) or (self.touching(S['角色71']) or (self.touching(S['角色72']) or ((self.touching(S['角色101']) or (self.touching(S['角色99']) or self.touching(S['角色100']))) or self.touching(S['角色102']))))):
-                        if (self.touching(S['角色102']) or self.touching(S['角色99'])):
-                            for _ in range(rep(200)):
-                                self.change_effect('pixelate', 1)
-                                yield
-                            self.hide()
-                            return
-                        self.goto_sprite(S['角色2'])
-                        self.hide()
-                    yield
-                self.set_heading(rand(-180, 180))
-                for _ in range(rep(rand(30, 1000))):
-                    self.bounce_off_edge()
-                    self.move(rand(50, 5))
-                    self.turn(rand(0, 50))
-                    if self.touching(S['角色1']):
-                        self.hide()
-                        V['1 POWER'] = add(V.get('1 POWER', 0), -10)
-                        V['1 TIME'] = add(V.get('1 TIME', 0), -10)
-                    if (((self.touching(S['角色3']) or self.touching(S['角色67'])) or self.touching(S['角色69'])) or (self.touching(S['角色71']) or (self.touching(S['角色72']) or ((self.touching(S['角色101']) or (self.touching(S['角色99']) or self.touching(S['角色100']))) or self.touching(S['角色102']))))):
-                        if (self.touching(S['角色102']) or self.touching(S['角色99'])):
-                            for _ in range(rep(200)):
-                                self.change_effect('pixelate', 1)
-                                yield
-                            self.hide()
-                            return
-                        self.goto_sprite(S['角色2'])
-                        self.hide()
-                    yield
-            self.hide()
+            if (yield from arrow_cycle(self, None, False)):
+                return          # destroyed for good (as in the original)
         yield
 
 @stage.on_flag(sp01)

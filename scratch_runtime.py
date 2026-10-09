@@ -431,6 +431,13 @@ class Sprite:
 
     def _fence(self):
         r = self.rect()
+        if getattr(self, 'keep_inside', False):      # keep the whole sprite on the stage
+            dx = max(0, -r.left) - max(0, r.right - STAGE_W)
+            dy = max(0, -r.top) - max(0, r.bottom - STAGE_H)
+            if dx or dy:
+                self.x += dx
+                self.y -= dy
+            return
         inset = int(min(15, r.width // 2, r.height // 2)) or 1
         dx = dy = 0
         if r.right < inset: dx = inset - r.right
@@ -522,12 +529,26 @@ class Stage:
         pygame.display.init()      # (no audio: this project never plays a sound)
         pygame.font.init()
         self.title = title
-        # SCALED: the game is still drawn at 480x360, but the window is enlarged to the biggest whole
-        # multiple that fits the desktop, can be resized by dragging, and F11 toggles fullscreen.
+        # The game is always drawn on a 480x360 surface (self.screen).  The window is opened at the biggest
+        # size that comfortably fits the desktop (not just whole multiples), can be resized by dragging, and
+        # the picture is scaled to fit with black bars.  F11 toggles fullscreen.
+        self.window = None
+        self._view = (0, 0, 1.0)      # (x, y, scale) of the game picture inside the window
         try:
-            self.screen = pygame.display.set_mode((STAGE_W, STAGE_H), pygame.SCALED | pygame.RESIZABLE)
-        except pygame.error:                      # very old pygame / unusual driver: plain small window
-            self.screen = pygame.display.set_mode((STAGE_W, STAGE_H))
+            info = pygame.display.Info()
+            if info.current_w > 0 and info.current_h > 0:
+                scale = min(info.current_w * 0.9 / STAGE_W, info.current_h * 0.8 / STAGE_H)
+            else:
+                scale = 2.0
+            scale = max(1.0, scale)
+            self.window = pygame.display.set_mode((int(STAGE_W * scale), int(STAGE_H * scale)), pygame.RESIZABLE)
+            self.screen = pygame.Surface((STAGE_W, STAGE_H))
+        except pygame.error:                      # unusual driver: fall back to the old behaviour
+            self.window = None
+            try:
+                self.screen = pygame.display.set_mode((STAGE_W, STAGE_H), pygame.SCALED | pygame.RESIZABLE)
+            except pygame.error:
+                self.screen = pygame.display.set_mode((STAGE_W, STAGE_H))
         pygame.display.set_caption(title)
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("arial", 14, bold=True)
@@ -592,6 +613,8 @@ class Stage:
 
     def mouse_xy(self):
         mx, my = pygame.mouse.get_pos()
+        vx, vy, s = self._view
+        mx, my = (mx - vx) / s, (my - vy) / s          # window pixels -> stage pixels
         return mx - STAGE_W / 2, STAGE_H / 2 - my
 
     def key_pressed(self, key):
@@ -679,6 +702,27 @@ class Stage:
         elif self.hint:
             img = self.small_font.render(self.hint, True, (110, 110, 110))
             self.screen.blit(img, (STAGE_W - img.get_width() - 6, STAGE_H - img.get_height() - 4))
+        self._present()
+
+    def _present(self):
+        """show the 480x360 picture in the window, scaled to fit (letterboxed)"""
+        if self.window is None:                    # fallback mode: self.screen IS the display
+            pygame.display.flip()
+            return
+        win = pygame.display.get_surface()
+        ww, wh = win.get_size()
+        s = min(ww / STAGE_W, wh / STAGE_H)
+        w, h = max(1, int(STAGE_W * s)), max(1, int(STAGE_H * s))
+        x, y = (ww - w) // 2, (wh - h) // 2
+        self._view = (x, y, s)
+        win.fill((0, 0, 0))
+        if (w, h) == (STAGE_W, STAGE_H):
+            win.blit(self.screen, (x, y))
+        else:
+            try:
+                win.blit(pygame.transform.smoothscale(self.screen, (w, h)), (x, y))
+            except ValueError:                      # smoothscale needs 24/32-bit surfaces
+                win.blit(pygame.transform.scale(self.screen, (w, h)), (x, y))
         pygame.display.flip()
 
     # ---- help screen ----------------------------------------------------------------
