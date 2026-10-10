@@ -2,6 +2,31 @@
 
 Python / pygame translation of the Scratch 1.x project `Cat_Knight_Against_Buffalo.sb`.
 
+> **Disclaimer:** this game can be won easily. It was made for fun, not as a balanced challenge,
+> so don't expect a tough fight (the secret powers make it even easier).
+
+## Background story
+
+The idea for this game came from *Ultraman Tiga*, which was one of my favourite shows when I was
+young. It is the 1996 Tsuburaya Productions series and the first of the Heisei Ultraman shows. Daigo Madoka, a member of the GUTS defence team, merges with an
+ancient giant of light and becomes Tiga to fight monsters and the forces of darkness.
+
+Tiga is known for its three forms, and the cat's forms 1, 2 and 3 line up closely with them:
+
+* **Multi Type** (red and purple): the balanced default, like form 1.
+* **Sky Type** (purple): the fast, agile form, like form 2 (fastest runner, weakest hits).
+* **Power Type** (red): the strong, slow form, like form 3 (slowest, hardest hits).
+
+Each form change also comes with its own finishing beam, such as the Zepellion Ray (a ray in the
+form's own colour). The series takes a darker turn later on, when Tiga turns to stone before returning,
+and the final episode features his ultimate form, Glitter Tiga. In the game, the secret form 4 is
+the Glitter Cat: the cat's ultimate form, unlocked with the `Q`+`I` power-up.
+
+The two secret plane modes are the GUTS fighters from the show:
+
+* **GUTS Wing 2** (`H`+`E`+`L`+`P`): needle lasers (`7`), missiles (`9`) and the Dexus Beam (`0`).
+* **GUTS Wing 1** (`W`+`I`+`N`): needle lasers (`U`) and missiles (`O`).
+
 ## Run
 
     pip install -r requirements.txt
@@ -47,14 +72,3 @@ runs out ("YOU LOSE") or the buffalo's blood reaches zero ("YOU WIN!").
 * Variables live in the dict `V`; sprites are looked up by their Scratch name in `S`.
 * Sprite names are the original ones (角色 = "sprite").
 * Tweakables at the top of `scratch_runtime.py`: `FPS` (game speed) and `FENCE`.
-
-## Notes / differences from Scratch
-
-* Removed as pointless: 12 empty scripts, and the hidden `L`+`U`+`Y` script (it *added* blood to the
-  buffalo, i.e. worked against the player).
-* Scripts that had no "when ..." hat block in the original (loose blocks lying on the
-  scripting area) never ran in Scratch either, so they are not translated.
-* Sounds are not used by any block in the project, so none are included.
-* Graphic effects (whirl, fisheye, pixelate, color, ghost) are re-implemented with numpy and
-  look close to, but not identical to, Scratch's.
-* Holding a key keeps re-starting its "when key pressed" script once the previous run ends.
