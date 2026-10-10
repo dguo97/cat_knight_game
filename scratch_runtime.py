@@ -578,6 +578,10 @@ class Stage:
         # help / title screen (paged overlay; the game is paused while it is open)
         self.help_pages = []      # [(title, [lines])]; a line starting with '#' is a sub-heading
         self.start_options = []   # [(key letter, label, [keys held for a moment at the start])]
+        # optional on/off menu drawn on help page 0 of the title screen:
+        #   {'title': str, 'items': [{'key': '1', 'label': str, 'note': str, 'on': bool,
+        #                             'var': variable set to 1/0 at the start, 'setup': {vars applied when ON}}]}
+        self.menu = None
         self.help_visible = False
         self.help_page = 0
         self.started = False      # becomes True once the player leaves the title screen
@@ -755,6 +759,32 @@ class Stage:
         self.help_page = page
         self.keys_down.clear()
 
+    MENU_Y0, MENU_ROW = 58, 36            # where the menu rows start / how tall each row is
+
+    def _apply_menu(self):
+        """the player is leaving the title screen: turn the menu choices into variables"""
+        if not self.menu:
+            return
+        setup = dict(self.pending_setup or {})
+        for it in self.menu['items']:
+            if it.get('var'):
+                self.vars[it['var']] = 1 if it['on'] else 0
+            if it['on'] and it.get('setup'):
+                setup.update(it['setup'])
+        self.pending_setup = setup or None
+
+    def _menu_active(self):
+        return bool(self.menu) and not self.started and self.help_visible and self.help_page == 0
+
+    def _menu_click(self, pos):
+        vx, vy, s = self._view
+        sx, sy = (pos[0] - vx) / s, (pos[1] - vy) / s
+        if 12 <= sx <= STAGE_W - 12:
+            i = int((sy - self.MENU_Y0 + 4) // self.MENU_ROW)
+            if 0 <= i < len(self.menu['items']):
+                it = self.menu['items'][i]
+                it['on'] = not it['on']
+
     def close_help(self):
         self.help_visible = False
         self.started = True
@@ -772,11 +802,17 @@ class Stage:
         elif key == pygame.K_ESCAPE:
             self.running = False
         else:
+            if not self.started and self.menu and self.help_page == 0:      # menu: key toggles an option
+                for it in self.menu['items']:
+                    if key in (getattr(pygame, "K_" + it['key']), getattr(pygame, "K_KP" + it['key'], None)):
+                        it['on'] = not it['on']
+                        return
             if not self.started:                    # title screen: pick how to start
                 for opt in self.start_options:
                     letter, _label, keys = opt[:3]
                     if key == getattr(pygame, "K_" + letter.lower()):
                         self.pending_setup = opt[3] if len(opt) > 3 else None
+                        self._apply_menu()
                         for kk in keys:
                             code = self.keymap[kk]
                             self.keys_down.add(code)
@@ -785,6 +821,8 @@ class Stage:
                         self.started = True
                         return
             if key in (pygame.K_RETURN, pygame.K_SPACE, pygame.K_F1) or self.started:
+                if not self.started:
+                    self._apply_menu()
                 self.close_help()
 
     def _draw_help(self):
@@ -795,9 +833,21 @@ class Stage:
         if not self.help_pages:
             return
         title, lines = self.help_pages[self.help_page]
+        on_menu = bool(self.menu) and self.help_page == 0
+        if on_menu:
+            title = self.menu['title']
         img = self.help_title_font.render(title, True, (255, 210, 60))
         self.screen.blit(img, ((STAGE_W - img.get_width()) // 2, 18))
         y = 56
+        if on_menu:
+            lines = []
+            for i, it in enumerate(self.menu['items']):
+                ry = self.MENU_Y0 + i * self.MENU_ROW
+                col = (120, 255, 140) if it['on'] else (170, 175, 190)
+                self.screen.blit(self.help_font.render(it['key'], True, (255, 255, 255)), (28, ry))
+                self.screen.blit(self.help_font.render("[X]" if it['on'] else "[  ]", True, col), (48, ry))
+                self.screen.blit(self.help_font.render(it['label'] + ("   ON" if it['on'] else "   OFF"), True, col), (90, ry))
+                self.screen.blit(self.small_font.render(it['note'], True, (150, 155, 175)), (90, ry + 17))
         for line in lines:
             if line.startswith("#"):
                 y += 4
@@ -813,8 +863,12 @@ class Stage:
                 img = self.help_font.render(line, True, (205, 210, 225))
                 self.screen.blit(img, (28, y))
             y += 18
-        foot = ("<- ->  turn page    ENTER / SPACE  play" if not self.started else
-                "<- ->  turn page    any other key  back to the game")
+        if not self.started:
+            foot = ("1-%d / click: on-off    ENTER: play    <- ->: pages" % len(self.menu['items'])
+                    if on_menu else "<- ->  turn page    ENTER / SPACE  play")
+        else:
+            foot = "<- ->  turn page    any other key  back to the game"
+
         img = self.small_font.render(f"{foot}      page {self.help_page + 1}/{len(self.help_pages)}",
                                      True, (255, 210, 60))
         self.screen.blit(img, ((STAGE_W - img.get_width()) // 2, STAGE_H - 34))
@@ -849,6 +903,8 @@ class Stage:
                         self.keys_down.add(ev.key)
                 elif ev.type == pygame.KEYUP:
                     self.keys_down.discard(_KP_ALIAS.get(ev.key, ev.key))
+                elif ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1 and self._menu_active():
+                    self._menu_click(ev.pos)
                 elif ev.type == pygame.WINDOWFOCUSLOST:
                     self.keys_down.clear()
             if self.help_visible:                  # paused: game time stands still

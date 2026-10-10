@@ -38,6 +38,12 @@ V['OZ'] = 0
 V['Chaos'] = 0
 V['hit_scale'] = 1      # how hard buffalo bumps drain TIME (Easy mode lowers it)
 V['buf_speed'] = 1      # buffalo speed multiplier (Easy mode lowers it)
+# on/off options chosen on the title-screen menu (the original secret key combos still work as well)
+V['opt_charge'] = 0     # the buffalo charges at you             (secret: U + L)
+V['opt_arrows'] = 0     # arrows rain down                       (secret: P + Q)
+V['opt_ball'] = 0       # the big black ball                     (secret: M + E)
+V['opt_heal'] = 0       # the buffalo heals +100 every frame     (secret: L + U + Y)
+V['opt_rage'] = 1       # the buffalo speeds up as its blood drops
 
 # ---- FIX: shared flight loop for plane shots.  It always ends (step cap), also when the edge
 # fence pins the shot, stops right after a hit, and ends if the shot touches the cat.
@@ -140,6 +146,8 @@ stats = {'start_blood': 10000}      # filled in a moment after the game starts (
 
 def rage():
     """0.0 at the start of the fight -> 1.0 when the buffalo is almost out of blood"""
+    if not V['opt_rage']:
+        return 0.0
     start = max(1, stats['start_blood'])
     return max(0.0, min(1.0, 1 - V['2 BLOOD'] / start))
 
@@ -218,7 +226,7 @@ def stage_script_1(self):
     V['PQ'] = 0
     V['OZ'] = 0
     V['Y1'] = 0
-    while not (stage.key_pressed('p') and stage.key_pressed('q')):
+    while not (V['opt_arrows'] or (stage.key_pressed('p') and stage.key_pressed('q'))):
         yield
     while True:
         yield from wait(stage, rand(0, 5) / (1 + rage()))       # arrows come more often as the buffalo weakens
@@ -255,7 +263,7 @@ def stage_script_4(self):
 @stage.on_flag(stage_t)
 def stage_script_5(self):
     if False: yield          # (makes this function a generator)
-    while not (stage.key_pressed('u') and stage.key_pressed('l')):
+    while not (V['opt_charge'] or (stage.key_pressed('u') and stage.key_pressed('l'))):
         yield
     while True:
         yield from wait(stage, rand(1, 10) / (1 + rage()))      # shorter calm periods as the buffalo weakens
@@ -270,6 +278,17 @@ def stage_script_6(self):
     yield
     yield
     stats['start_blood'] = V['2 BLOOD']
+
+# RESTORED from the original Scratch project: holding L + U + Y together switches on a stage script that
+# adds 100 to the buffalo's blood every frame, and it keeps going until the game ends.
+@stage.on_flag(stage_t)
+def stage_script_7(self):
+    if False: yield          # (makes this function a generator)
+    while not (V['opt_heal'] or (stage.key_pressed('l') and (stage.key_pressed('u') and stage.key_pressed('y')))):
+        yield
+    while True:
+        V['2 BLOOD'] = add(V.get('2 BLOOD', 0), 100)
+        yield
 
 # ===================================================================== sprites
 # (created back-to-front, i.e. later sprites are drawn on top)
@@ -1359,7 +1378,7 @@ sp06 = stage.add_sprite('角色87', [
 def script_06_1(self):
     if False: yield          # (makes this function a generator)
     self.set_size(100)
-    while not (stage.key_pressed('m') and stage.key_pressed('e')):
+    while not (V['opt_ball'] or (stage.key_pressed('m') and stage.key_pressed('e'))):
         yield
     while True:
         if eq(S['角色2'].attr('size'), 100):
@@ -1607,14 +1626,13 @@ stage.watchers.append(Watcher(stage, '1 TIME', (7, 1, 93, 21)))
 # ===================================================================== help / title screen
 # (shown on start and with F1; the game is paused while it is open)
 stage.help_pages = [
+    ('START MENU', []),          # drawn by the runtime from stage.menu (below)
     ('CAT KNIGHT AGAINST BUFFALO', [
         "Drain the buffalo's blood (2 BLOOD) to 0 before",
         'your 1 TIME runs out.  1 POWER refills by itself.',
-        '#CHOOSE HOW TO START',
-        'ENTER\tNormal: the buffalo just wanders about',
-        'E\tEasy: more time, weaker buffalo, gentle hits',
-        'B\tBattle: the buffalo charges at you',
-        'A\tHard: it charges AND arrows rain down',
+        '#START',
+        'ENTER\tPlay with the options from the start menu',
+        '\t(switch buffalo options on/off on page 1)',
         '#QUICK CONTROLS',
         'ARROWS\tRun around.  Bump the buffalo to hurt it.',
         '1 2 3\tSwitch form',
@@ -1649,6 +1667,19 @@ stage.help_pages = [
         'G\tForm 1 only, 100 power: buffalo blood / 99,',
         '\tbut your TIME is divided by 15.',
     ]),
+    ('SECRET KEY COMBOS', [
+        'Hold these keys together, any time during play.',
+        '(The start menu can switch the first four on for you.)',
+        '#BUFFALO',
+        'U + L\tThe buffalo charges at you',
+        'P + Q\tArrows rain down',
+        'M + E\tThe big black ball appears',
+        'L + U + Y\tThe buffalo heals +100 blood every frame!',
+        '#YOU',
+        'Q + I\tCall the form 4 power-up  (see next page)',
+        'H E L P\tPlane 1  (see the plane page)',
+        'W + I + N\tPlane 2',
+    ]),
     ('SECRET FORM 4', [
         'Hold Q + I, then keep Q held: a power-up flies',
         'to the cat.  Touching it refills TIME and POWER',
@@ -1659,6 +1690,7 @@ stage.help_pages = [
         "T\tDrain: takes 80% of the buffalo's blood into",
         '\tyour POWER and TIME',
         'W\tHoming swarm: 30 damage per hit',
+        'D\tGiant summon: holds the buffalo still for ~30 s',
         'R  E\tHold: heavy shield / heavy sword',
     ]),
     ('PLANE MODES', [
@@ -1673,13 +1705,25 @@ stage.help_pages = [
         'Planes crash if they touch the buffalo or arrows.',
     ]),
 ]
-# letter on the title screen -> label, keys that get "pressed" for the player at the start
-stage.start_options = [
-    # Easy: wandering buffalo (like Normal) but slower, only 6000 blood, 300 TIME, and bumps hurt a quarter as much
-    ('E', 'Easy', [], {'1 TIME': 300, '2 BLOOD': 6000, 'hit_scale': 0.25, 'buf_speed': 0.6}),
-    ('B', 'Battle', ['u', 'l']),                # same as holding U+L: the buffalo charges at you
-    ('A', 'Hard', ['u', 'l', 'p', 'q']),        # ... and P+Q: arrows rain down
-]
+# the start menu: switch the buffalo's options on or off before playing (press the number or click)
+stage.menu = {
+    'title': 'START MENU',
+    'items': [
+        {'key': '1', 'label': 'Easy mode', 'note': 'weaker, slower buffalo, gentle hits', 'on': False,
+         'setup': {'2 BLOOD': 6000, 'hit_scale': 0.25, 'buf_speed': 0.6}},
+        {'key': '2', 'label': 'Charging buffalo', 'note': 'it charges at you   (secret key combo: U + L)',
+         'on': False, 'var': 'opt_charge'},
+        {'key': '3', 'label': 'Raining arrows', 'note': 'arrows rain down   (secret: P + Q)',
+         'on': False, 'var': 'opt_arrows'},
+        {'key': '4', 'label': 'Black ball', 'note': 'a huge bouncing ball   (secret: M + E)',
+         'on': False, 'var': 'opt_ball'},
+        {'key': '5', 'label': 'Healing buffalo', 'note': 'it heals +100 every frame!   (secret: L + U + Y)',
+         'on': False, 'var': 'opt_heal'},
+        {'key': '6', 'label': 'Angry buffalo', 'note': 'it speeds up as its blood drops',
+         'on': True, 'var': 'opt_rage'},
+    ],
+}
+stage.start_options = []
 
 
 # ---- win / lose banner (the original only swaps in a blank cover costume)
